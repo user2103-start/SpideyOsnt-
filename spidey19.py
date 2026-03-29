@@ -223,4 +223,10 @@ def main():
     print("✅ Bot is Live with Aesthetic Vertical UI!")
     app.run_polling()
 
-if __name__ == "__main__": main()
+if __name__ == "__main__":
+    import asyncio
+    try:
+        main()
+    except (RuntimeError, KeyboardInterrupt):
+        # Handle cases where the loop is already closed or interrupted
+        pass
