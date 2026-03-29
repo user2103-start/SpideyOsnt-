@@ -9,10 +9,8 @@ from telegram.ext import Application, CommandHandler, MessageHandler, filters, C
 app_flask = Flask(__name__)
 @app_flask.route('/')
 def home(): return "SPIDEYOSINT IS LIVE"
-
 def run_flask(): 
-    port = int(os.environ.get('PORT', 10000))
-    app_flask.run(host='0.0.0.0', port=port)
+    app_flask.run(host='0.0.0.0', port=int(os.environ.get('PORT', 10000)))
 
 # =============== CONFIGURATION =============== #
 TOKEN = "8772935900:AAHKNkv3MtEfSqubU1UZEp2zLyqqKAi0XSU"
@@ -55,37 +53,24 @@ async def check_subs(user_id, bot):
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     uid = str(user.id)
-    
-    # User info save in "Database"
     db["users"][uid] = {"name": user.first_name, "username": f"@{user.username}" if user.username else "N/A"}
     save_db(db)
 
     if not db["bot_status"] and user.id != ADMIN_ID:
-        await update.message.reply_text("⚠️ Bot is currently OFF by Admin.")
+        await update.message.reply_text("⚠️ Bot is currently OFF.")
         return
 
     if not await check_subs(user.id, context.bot):
         btns = [[InlineKeyboardButton("📢 Join Channel", url=c["link"])] for c in FORCE_CHANNELS]
         btns.append([InlineKeyboardButton("✅ Check Subscription", callback_data="check_sub")])
-        await update.message.reply_photo(photo=WELCOME_IMAGE, caption="🚫 Pehle Channel Join Karo!", reply_markup=InlineKeyboardMarkup(btns))
+        await update.message.reply_photo(photo=WELCOME_IMAGE, caption="🚫 Join channel first!", reply_markup=InlineKeyboardMarkup(btns))
         return
 
-    greet = (
-        f"🔥 SPIDEYOSINT OSINT BOT 🔥\n\n"
-        f"Namaste {user.first_name} 👋\n\n"
-        f"🇮🇳 POWERED BY SPIDEYOSINT 💀\n"
-        f"═══════════════════════\n"
-        f"🚀 ADVANCED OSINT TOOL\n"
-        f"⚡ MULTIPLE API INTEGRATED\n"
-        f"💀 USE WISELY\n"
-        f"═══════════════════════\n\n"
-        f"📌 COMMANDS:\n"
-        f"/num <number> Mobile number lookup\n"
-        f"/family <aadhaar>- Family lookup\n"
-        f"/tg <telegram_id>- Telegram_ID lookup\n\n"
-        f"⚠️ LIMITED TIME API\n"
-        f"👑 DEVELOPED BY SPIDEYOSINT"
-    )
+    greet = (f"🔥 SPIDEYOSINT OSINT BOT 🔥\n\nNamaste {user.first_name} 👋\n\n"
+             "🇮🇳 POWERED BY SPIDEYOSINT 💀\n═══════════════════════\n"
+             "🚀 ADVANCED OSINT TOOL\n⚡ MULTIPLE API INTEGRATED\n💀 USE WISELY\n"
+             "═══════════════════════\n\n📌 COMMANDS:\n"
+             "/num <number>\n/family <aadhaar>\n/tg <id>")
     await update.message.reply_photo(photo=WELCOME_IMAGE, caption=greet)
 
 async def handle_osint(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -99,23 +84,33 @@ async def handle_osint(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = await update.message.reply_text(f"🔄 Searching {cmd.upper()}...")
     try:
         p = {'key': API_KEYS[cmd], ('number' if cmd=='num' else 'id' if cmd=='tg' else 'term'): val}
-        r = requests.get(API_URLS[cmd], params=p, timeout=20).json()
-        data = r.get('result', r.get('data'))
-        if data:
+        r = requests.get(API_URLS[cmd], params=p, timeout=25).json()
+        
+        # --- SMART PARSING FIX ---
+        # Pehle dekho 'result' ya 'data' keys hain? Agar nahi toh poora response hi data hai.
+        final_data = r.get('result', r.get('data', r))
+        
+        # Agar response me 'status': false hai toh matlab data nahi mila
+        if isinstance(final_data, dict) and final_data.get('status') == False:
+            await msg.edit_text("❌ No records found for this input.")
+            return
+
+        if final_data:
             await msg.delete()
-            res = f"🔍 {cmd.upper()} RESULT:\n\n<code>{json.dumps(data, indent=2)}</code>"
-            await update.message.reply_text(res, parse_mode='HTML')
-        else: await msg.edit_text("❌ No data found.")
-    except: await msg.edit_text("❌ API Error or Timeout.")
+            # JSON ko sundar format me dikhane ke liye
+            formatted_res = json.dumps(final_data, indent=2, ensure_ascii=False)
+            await update.message.reply_text(f"🔍 {cmd.upper()} RESULT:\n\n<pre>{html.escape(formatted_res)}</pre>", parse_mode='HTML')
+        else: 
+            await msg.edit_text("❌ No data found.")
+    except Exception as e: 
+        await msg.edit_text(f"❌ API Error: {str(e)}")
 
 # =============== ADMIN PANEL =============== #
 async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID: return
     st = "🟢 ON" if db["bot_status"] else "🔴 OFF"
-    kb = [
-        [InlineKeyboardButton(f"Bot Status: {st}", callback_data="toggle")],
-        [InlineKeyboardButton("👥 User List", callback_data="list"), InlineKeyboardButton("📢 Broadcast", callback_data="bc")]
-    ]
+    kb = [[InlineKeyboardButton(f"Bot Status: {st}", callback_data="toggle")],
+          [InlineKeyboardButton("👥 User List", callback_data="list"), InlineKeyboardButton("📢 Broadcast", callback_data="bc")]]
     await update.message.reply_text("🔐 ADMIN CONTROL", reply_markup=InlineKeyboardMarkup(kb))
 
 async def cb_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -123,31 +118,25 @@ async def cb_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await q.answer()
     if q.data == "toggle":
         db["bot_status"] = not db["bot_status"]; save_db(db)
-        await q.message.edit_text("✅ Status Updated! Check /admin.")
+        await q.message.edit_text("✅ Status Updated!")
     elif q.data == "list":
-        u_list = "👥 **LAST 20 USERS:**\n\n"
-        for k, v in list(db["users"].items())[-20:]:
-            u_list += f"▪️ {v['name']} ({v['username']}) -> `{k}`\n"
+        u_list = "👥 **LAST 20 USERS:**\n\n" + "\n".join([f"▪️ {v['name']} -> `{k}`" for k,v in list(db["users"].items())[-20:]])
         await q.message.reply_text(u_list, parse_mode='Markdown')
     elif q.data == "bc":
         context.user_data['mode'] = 'bc'
-        await q.message.reply_text("📢 Send message for broadcast (or /cancel)")
+        await q.message.reply_text("📢 Send broadcast text (or /cancel)")
     elif q.data == "check_sub":
-        if await check_subs(q.from_user.id, context.bot):
-            await q.edit_message_text("✅ Access Granted! Use /start")
+        if await check_subs(q.from_user.id, context.bot): await q.edit_message_text("✅ Access Granted! Use /start")
         else: await q.answer("❌ Join pehle!", show_alert=True)
 
 async def admin_msg(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID or 'mode' not in context.user_data: return
     if update.message.text == "/cancel": context.user_data.clear(); return
-    
-    count = 0
     for uid in db["users"].keys():
-        try: await context.bot.send_message(uid, update.message.text); count += 1
+        try: await context.bot.send_message(uid, update.message.text)
         except: pass
-    await update.message.reply_text(f"✅ Sent to {count} users."); context.user_data.clear()
+    await update.message.reply_text("✅ Broadcast Sent."); context.user_data.clear()
 
-# =============== MAIN RUNNER =============== #
 async def main():
     app = Application.builder().token(TOKEN).build()
     app.add_handler(CommandHandler("start", start))
@@ -155,12 +144,9 @@ async def main():
     app.add_handler(CommandHandler(["num", "family", "tg"], handle_osint))
     app.add_handler(CallbackQueryHandler(cb_handler))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, admin_msg))
-
     Thread(target=run_flask, daemon=True).start()
-
     async with app:
-        await app.initialize()
-        await app.start()
+        await app.initialize(); await app.start()
         await app.updater.start_polling(drop_pending_updates=True)
         while True: await asyncio.sleep(3600)
 
