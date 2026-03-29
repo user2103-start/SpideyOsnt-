@@ -110,7 +110,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"🔥 SPIDEYOSINT OSINT BOT 🔥\n\nNamaste {user.first_name} 👋\n\n"
         f"🇮🇳 POWERED BY SPIDEYOSINT 💀\n═══════════════════════\n"
         f"🚀 ADVANCED OSINT TOOL\n⚡ MULTIPLE API INTEGRATED\n💀 USE WISELY\n"
-        f"═══════════════════════\n\n📌 COMMANDS:\n/num <number>\n/family <aadhaar>\n/tg <id>\n\n"
+        f"═══════════════════════\n\n📌 COMMANDS:\n/num <number>Mobile number lookup\n/family <aadhaar>- Family looku\n/tg <telegram_id> - Telegram ID lookup\n\n"
         f"⚠️ LIMITED TIME API\n👑 DEVELOPED BY SPIDEYOSINT"
     )
     await update.message.reply_photo(photo=WELCOME_IMAGE, caption=start_text)
