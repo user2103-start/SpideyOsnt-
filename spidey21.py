@@ -12,7 +12,7 @@ def run_flask():
     app_flask.run(host='0.0.0.0', port=int(os.environ.get('PORT', 10000)))
 
 # =============== CONFIGURATION =============== #
-TOKEN = "8772935900:AAHKNkv3MtEfSqubU1UZEp2zLyqqKAi0XSU"
+TOKEN = "8772935900:AAFAWA70z_pvqphM1xRbRy5efuCEpvNmbN4"
 ADMIN_ID = 6593129349
 DB_FILE = "bot_settings.json"
 WELCOME_IMAGE = "https://i.postimg.cc/6381GR85/IMG-20260320-165905-146.jpg"
@@ -131,8 +131,16 @@ async def handle_osint(update: Update, context: ContextTypes.DEFAULT_TYPE):
             report = smart_format(final_data)
             output = f"🔍 {cmd.upper()} RESULT:\n{report}"
             await status_msg.delete()
-            for part in split_message(output):
-                await update.message.reply_text(part, parse_mode='Markdown')
+            
+            # --- FIX: Message Splitting for Large Data ---
+            parts = split_message(output)
+            for part in parts:
+                try:
+                    await update.message.reply_text(part, parse_mode='Markdown')
+                except:
+                    # Fallback for special characters that break Markdown
+                    await update.message.reply_text(part)
+            # ---------------------------------------------
         else:
             await status_msg.edit_text("❌ No data found.")
     except Exception as e:
@@ -182,12 +190,18 @@ async def admin_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except: pass
         await update.message.reply_text("✅ Sent.")
     elif mode == 'chan':
-        cid, link = val.split('|')
-        db["channels"] = [{"chat_id": cid.strip(), "link": link.strip()}]
-        save_db(db); await update.message.reply_text("✅ Channel Updated.")
+        try:
+            cid, link = val.split('|')
+            db["channels"] = [{"chat_id": cid.strip(), "link": link.strip()}]
+            save_db(db); await update.message.reply_text("✅ Channel Updated.")
+        except:
+            await update.message.reply_text("❌ Format error! Use ID|Link")
     elif mode == 'lim':
-        db["search_limit"] = int(val); db["total_searches"] = 0
-        save_db(db); await update.message.reply_text(f"✅ Limit set to {val}.")
+        try:
+            db["search_limit"] = int(val); db["total_searches"] = 0
+            save_db(db); await update.message.reply_text(f"✅ Limit set to {val}.")
+        except:
+            await update.message.reply_text("❌ Enter a valid number.")
     
     context.user_data.clear()
 
