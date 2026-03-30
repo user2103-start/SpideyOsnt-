@@ -12,7 +12,7 @@ def run_flask():
     app_flask.run(host='0.0.0.0', port=int(os.environ.get('PORT', 10000)))
 
 # =============== CONFIGURATION =============== #
-TOKEN "8772935900:AAHKNkv3MtEfSqubU1UZEp2zLyqqKAi0XSU"
+TOKEN = "8772935900:AAHKNkv3MtEfSqubU1UZEp2zLyqqKAi0XSU"
 ADMIN_ID = 6593129349
 DB_FILE = "bot_settings.json"
 WELCOME_IMAGE = "https://i.postimg.cc/6381GR85/IMG-20260320-165905-146.jpg"
@@ -48,13 +48,11 @@ async def check_subs(user_id, bot):
     return True
 
 def format_osint_data(data):
-    """JSON data ko clean vertical report mein badalne ke liye"""
     if isinstance(data, list): data = data[0]
     if not isinstance(data, dict): return str(data)
-    
     report = ""
     for key, val in data.items():
-        if val: # Khali fields skip karne ke liye
+        if val:
             clean_key = key.replace("_", " ").title()
             report += f"🔹 {clean_key}: {val}\n"
     return report
@@ -80,10 +78,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
              "🇮🇳 POWERED BY SPIDEYOSINT 💀\n═══════════════════════\n"
              "🚀 ADVANCED OSINT TOOL\n⚡ MULTIPLE API INTEGRATED\n💀 USE WISELY\n"
              "═══════════════════════\n\n📌 COMMANDS:\n"
-             "/num <number> Mobile number lookup\n"
-             "/family <aadhaar>- Family lookup\n"
-             "/tg <telegram_id>- Telegram_ID lookup\n\n"
-             "⚠️ LIMITED TIME API\n👑 DEVELOPED BY SPIDEYOSINT")
+             "/num <number>\n/family <aadhaar>\n/tg <id>\n\n"
+             "👑 DEVELOPED BY SPIDEYOSINT")
     await update.message.reply_photo(photo=WELCOME_IMAGE, caption=greet)
 
 async def handle_osint(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -98,12 +94,65 @@ async def handle_osint(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         p = {'key': API_KEYS[cmd], ('number' if cmd=='num' else 'id' if cmd=='tg' else 'term'): val}
         r = requests.get(API_URLS[cmd], params=p, timeout=30).json()
-        
         final_data = r.get('result', r.get('data', r))
         
         if final_data:
             await msg.delete()
-            formatted_report = format_osint_data(final_data)
+            rep = format_osint_data(final_data)
+            output = f"🔍 {cmd.upper()} RESULT:\n\n{rep}"
+            if len(output) > 4000:
+                with open("res.txt", "w") as f: f.write(output)
+                await update.message.reply_document(document=open("res.txt", "rb"), caption="📄 Data limit reached. Result in file.")
+            else:
+                await update.message.reply_text(output)
+        else: await msg.edit_text("❌ No data found.")
+    except: await msg.edit_text("❌ API Error.")
+
+# =============== ADMIN PANEL =============== #
+async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID: return
+    st = "🟢 ON" if db["bot_status"] else "🔴 OFF"
+    kb = [[InlineKeyboardButton(f"Bot Status: {st}", callback_data="toggle")],
+          [InlineKeyboardButton("👥 User List", callback_data="list"), InlineKeyboardButton("📢 Broadcast", callback_data="bc")]]
+    await update.message.reply_text("🔐 ADMIN PANEL", reply_markup=InlineKeyboardMarkup(kb))
+
+async def cb_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query
+    await q.answer()
+    if q.data == "toggle":
+        db["bot_status"] = not db["bot_status"]; save_db(db)
+        await q.message.edit_text("✅ Updated!")
+    elif q.data == "list":
+        await q.message.reply_text(f"👥 Users: {len(db['users'])}")
+    elif q.data == "bc":
+        context.user_data['mode'] = 'bc'
+        await q.message.reply_text("📢 Send broadcast text.")
+    elif q.data == "check_sub":
+        if await check_subs(q.from_user.id, context.bot): await q.edit_message_text("✅ Access Granted!")
+
+async def admin_msg(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID or 'mode' not in context.user_data: return
+    for uid in db["users"].keys():
+        try: await context.bot.send_message(uid, update.message.text)
+        except: pass
+    await update.message.reply_text("✅ Sent."); context.user_data.clear()
+
+async def main():
+    app = Application.builder().token(TOKEN).build()
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("admin", admin_panel))
+    app.add_handler(CommandHandler(["num", "family", "tg"], handle_osint))
+    app.add_handler(CallbackQueryHandler(cb_handler))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, admin_msg))
+    Thread(target=run_flask, daemon=True).start()
+    async with app:
+        await app.initialize(); await app.start()
+        await app.updater.start_polling(drop_pending_updates=True)
+        while True: await asyncio.sleep(3600)
+
+if __name__ == "__main__":
+    try: asyncio.run(main())
+    except: pass            formatted_report = format_osint_data(final_data)
             output = f"🔍 {cmd.upper()} RESULT:\n\n{formatted_report}"
             
             # WORD LIMIT FIX: Agar result bahut bada hai toh file bana kar bhejega
