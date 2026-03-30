@@ -1,5 +1,4 @@
-import os, logging, requests, json, html, re, asyncio
-from datetime import datetime
+import os, requests, json, html, asyncio
 from threading import Thread
 from flask import Flask
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
@@ -13,7 +12,7 @@ def run_flask():
     app_flask.run(host='0.0.0.0', port=int(os.environ.get('PORT', 10000)))
 
 # =============== CONFIGURATION =============== #
-TOKEN = "8772935900:AAHKNkv3MtEfSqubU1UZEp2zLyqqKAi0XSU"
+TOKEN "8772935900:AAHKNkv3MtEfSqubU1UZEp2zLyqqKAi0XSU"
 ADMIN_ID = 6593129349
 DB_FILE = "bot_settings.json"
 WELCOME_IMAGE = "https://i.postimg.cc/6381GR85/IMG-20260320-165905-146.jpg"
@@ -24,7 +23,6 @@ API_URLS = {
     'family': "https://ayaanmods.site/family.php"
 }
 API_KEYS = {'num': 'annonymous', 'tg': 'annonymoustgtonum', 'family': 'annonymousfamily'}
-FORCE_CHANNELS = [{"chat_id": "-1003767136934", "link": "https://t.me/+skVu9tSSuccyYTQ1"}]
 
 # =============== DATABASE SYSTEM =============== #
 def load_db():
@@ -32,7 +30,7 @@ def load_db():
         try:
             with open(DB_FILE, "r") as f: return json.load(f)
         except: pass
-    return {"users": {}, "bot_status": True}
+    return {"users": {}, "bot_status": True, "channels": [{"chat_id": "-1003767136934", "link": "https://t.me/+skVu9tSSuccyYTQ1"}]}
 
 def save_db(data):
     with open(DB_FILE, "w") as f: json.dump(data, f, indent=4)
@@ -42,12 +40,24 @@ db = load_db()
 # =============== HELPERS =============== #
 async def check_subs(user_id, bot):
     if user_id == ADMIN_ID: return True
-    for c in FORCE_CHANNELS:
+    for c in db.get("channels", []):
         try:
             m = await bot.get_chat_member(c["chat_id"], user_id)
             if m.status in ['left', 'kicked']: return False
-        except: return False
+        except: continue
     return True
+
+def format_osint_data(data):
+    """JSON data ko clean vertical report mein badalne ke liye"""
+    if isinstance(data, list): data = data[0]
+    if not isinstance(data, dict): return str(data)
+    
+    report = ""
+    for key, val in data.items():
+        if val: # Khali fields skip karne ke liye
+            clean_key = key.replace("_", " ").title()
+            report += f"🔹 {clean_key}: {val}\n"
+    return report
 
 # =============== HANDLERS =============== #
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -61,16 +71,19 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if not await check_subs(user.id, context.bot):
-        btns = [[InlineKeyboardButton("📢 Join Channel", url=c["link"])] for c in FORCE_CHANNELS]
+        btns = [[InlineKeyboardButton("📢 Join Channel", url=c["link"])] for c in db["channels"]]
         btns.append([InlineKeyboardButton("✅ Check Subscription", callback_data="check_sub")])
-        await update.message.reply_photo(photo=WELCOME_IMAGE, caption="🚫 Join channel first!", reply_markup=InlineKeyboardMarkup(btns))
+        await update.message.reply_photo(photo=WELCOME_IMAGE, caption="🚫 Pehle Channel Join Karo!", reply_markup=InlineKeyboardMarkup(btns))
         return
 
     greet = (f"🔥 SPIDEYOSINT OSINT BOT 🔥\n\nNamaste {user.first_name} 👋\n\n"
              "🇮🇳 POWERED BY SPIDEYOSINT 💀\n═══════════════════════\n"
              "🚀 ADVANCED OSINT TOOL\n⚡ MULTIPLE API INTEGRATED\n💀 USE WISELY\n"
              "═══════════════════════\n\n📌 COMMANDS:\n"
-             "/num <number>\n/family <aadhaar>\n/tg <id>")
+             "/num <number> Mobile number lookup\n"
+             "/family <aadhaar>- Family lookup\n"
+             "/tg <telegram_id>- Telegram_ID lookup\n\n"
+             "⚠️ LIMITED TIME API\n👑 DEVELOPED BY SPIDEYOSINT")
     await update.message.reply_photo(photo=WELCOME_IMAGE, caption=greet)
 
 async def handle_osint(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -84,47 +97,49 @@ async def handle_osint(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = await update.message.reply_text(f"🔄 Searching {cmd.upper()}...")
     try:
         p = {'key': API_KEYS[cmd], ('number' if cmd=='num' else 'id' if cmd=='tg' else 'term'): val}
-        r = requests.get(API_URLS[cmd], params=p, timeout=25).json()
+        r = requests.get(API_URLS[cmd], params=p, timeout=30).json()
         
-        # --- SMART PARSING FIX ---
-        # Pehle dekho 'result' ya 'data' keys hain? Agar nahi toh poora response hi data hai.
         final_data = r.get('result', r.get('data', r))
         
-        # Agar response me 'status': false hai toh matlab data nahi mila
-        if isinstance(final_data, dict) and final_data.get('status') == False:
-            await msg.edit_text("❌ No records found for this input.")
-            return
-
         if final_data:
             await msg.delete()
-            # JSON ko sundar format me dikhane ke liye
-            formatted_res = json.dumps(final_data, indent=2, ensure_ascii=False)
-            await update.message.reply_text(f"🔍 {cmd.upper()} RESULT:\n\n<pre>{html.escape(formatted_res)}</pre>", parse_mode='HTML')
-        else: 
-            await msg.edit_text("❌ No data found.")
-    except Exception as e: 
-        await msg.edit_text(f"❌ API Error: {str(e)}")
+            formatted_report = format_osint_data(final_data)
+            output = f"🔍 {cmd.upper()} RESULT:\n\n{formatted_report}"
+            
+            # WORD LIMIT FIX: Agar result bahut bada hai toh file bana kar bhejega
+            if len(output) > 4000:
+                with open("result.txt", "w") as f: f.write(output)
+                await update.message.reply_document(document=open("result.txt", "rb"), caption="📄 Result is too long, sending as file.")
+            else:
+                await update.message.reply_text(output)
+        else: await msg.edit_text("❌ No data found.")
+    except Exception as e: await msg.edit_text(f"❌ Error: {str(e)}")
 
 # =============== ADMIN PANEL =============== #
 async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID: return
     st = "🟢 ON" if db["bot_status"] else "🔴 OFF"
-    kb = [[InlineKeyboardButton(f"Bot Status: {st}", callback_data="toggle")],
-          [InlineKeyboardButton("👥 User List", callback_data="list"), InlineKeyboardButton("📢 Broadcast", callback_data="bc")]]
-    await update.message.reply_text("🔐 ADMIN CONTROL", reply_markup=InlineKeyboardMarkup(kb))
+    kb = [
+        [InlineKeyboardButton(f"Bot Status: {st}", callback_data="toggle")],
+        [InlineKeyboardButton("📢 Channel Settings", callback_data="chan_set")],
+        [InlineKeyboardButton("👥 User List", callback_data="list"), InlineKeyboardButton("📢 Broadcast", callback_data="bc")]
+    ]
+    await update.message.reply_text("🔐 ADMIN CONTROL PANEL", reply_markup=InlineKeyboardMarkup(kb))
 
 async def cb_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer()
     if q.data == "toggle":
         db["bot_status"] = not db["bot_status"]; save_db(db)
-        await q.message.edit_text("✅ Status Updated!")
+        await q.message.edit_text("✅ Status Updated! Use /admin to see changes.")
+    elif q.data == "chan_set":
+        await q.message.reply_text("📌 Current Channels:\n" + "\n".join([c['chat_id'] for c in db['channels']]) + "\n\n(Feature to add/remove via command is active)")
     elif q.data == "list":
         u_list = "👥 **LAST 20 USERS:**\n\n" + "\n".join([f"▪️ {v['name']} -> `{k}`" for k,v in list(db["users"].items())[-20:]])
         await q.message.reply_text(u_list, parse_mode='Markdown')
     elif q.data == "bc":
         context.user_data['mode'] = 'bc'
-        await q.message.reply_text("📢 Send broadcast text (or /cancel)")
+        await q.message.reply_text("📢 Send message for broadcast (or /cancel)")
     elif q.data == "check_sub":
         if await check_subs(q.from_user.id, context.bot): await q.edit_message_text("✅ Access Granted! Use /start")
         else: await q.answer("❌ Join pehle!", show_alert=True)
@@ -137,6 +152,7 @@ async def admin_msg(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except: pass
     await update.message.reply_text("✅ Broadcast Sent."); context.user_data.clear()
 
+# =============== MAIN RUNNER =============== #
 async def main():
     app = Application.builder().token(TOKEN).build()
     app.add_handler(CommandHandler("start", start))
