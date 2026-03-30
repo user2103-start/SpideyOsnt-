@@ -12,7 +12,7 @@ def run_flask():
     app_flask.run(host='0.0.0.0', port=int(os.environ.get('PORT', 10000)))
 
 # =============== CONFIGURATION =============== #
-TOKEN = "8772935900:AAFAWA70z_pvqphM1xRbRy5efuCEpvNmbN4"
+TOKEN = "8772935900:AAHKNkv3MtEfSqubU1UZEp2zLyqqKAi0XSU"
 ADMIN_ID = 6593129349
 DB_FILE = "bot_settings.json"
 WELCOME_IMAGE = "https://i.postimg.cc/6381GR85/IMG-20260320-165905-146.jpg"
