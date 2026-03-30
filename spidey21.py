@@ -48,14 +48,14 @@ async def check_subs(user_id, bot):
     return True
 
 def format_osint_data(data):
-    if isinstance(data, list): data = data[0]
+    if isinstance(data, list) and len(data) > 0: data = data[0]
     if not isinstance(data, dict): return str(data)
     report = ""
     for key, val in data.items():
         if val:
             clean_key = key.replace("_", " ").title()
             report += f"🔹 {clean_key}: {val}\n"
-    return report
+    return report if report else "No specific details found."
 
 # =============== HANDLERS =============== #
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -97,16 +97,18 @@ async def handle_osint(update: Update, context: ContextTypes.DEFAULT_TYPE):
         final_data = r.get('result', r.get('data', r))
         
         if final_data:
-            await msg.delete()
             rep = format_osint_data(final_data)
             output = f"🔍 {cmd.upper()} RESULT:\n\n{rep}"
+            await msg.delete()
             if len(output) > 4000:
                 with open("res.txt", "w") as f: f.write(output)
-                await update.message.reply_document(document=open("res.txt", "rb"), caption="📄 Data limit reached. Result in file.")
+                await update.message.reply_document(document=open("res.txt", "rb"), caption="📄 Result is too long, sending as file.")
             else:
                 await update.message.reply_text(output)
-        else: await msg.edit_text("❌ No data found.")
-    except: await msg.edit_text("❌ API Error.")
+        else:
+            await msg.edit_text("❌ No data found.")
+    except Exception as e:
+        await msg.edit_text(f"❌ API Error: {str(e)}")
 
 # =============== ADMIN PANEL =============== #
 async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -120,22 +122,27 @@ async def cb_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer()
     if q.data == "toggle":
-        db["bot_status"] = not db["bot_status"]; save_db(db)
-        await q.message.edit_text("✅ Updated!")
+        db["bot_status"] = not db["bot_status"]
+        save_db(db)
+        await q.message.edit_text(f"✅ Status Updated: {'ON' if db['bot_status'] else 'OFF'}")
     elif q.data == "list":
-        await q.message.reply_text(f"👥 Users: {len(db['users'])}")
+        await q.message.reply_text(f"👥 Total Users: {len(db['users'])}")
     elif q.data == "bc":
         context.user_data['mode'] = 'bc'
-        await q.message.reply_text("📢 Send broadcast text.")
+        await q.message.reply_text("📢 Send broadcast text now.")
     elif q.data == "check_sub":
-        if await check_subs(q.from_user.id, context.bot): await q.edit_message_text("✅ Access Granted!")
+        if await check_subs(q.from_user.id, context.bot):
+            await q.edit_message_text("✅ Access Granted! Use /start")
+        else:
+            await q.answer("❌ Join pehle!", show_alert=True)
 
 async def admin_msg(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID or 'mode' not in context.user_data: return
     for uid in db["users"].keys():
         try: await context.bot.send_message(uid, update.message.text)
         except: pass
-    await update.message.reply_text("✅ Sent."); context.user_data.clear()
+    await update.message.reply_text("✅ Broadcast Sent.")
+    context.user_data.clear()
 
 async def main():
     app = Application.builder().token(TOKEN).build()
@@ -144,77 +151,17 @@ async def main():
     app.add_handler(CommandHandler(["num", "family", "tg"], handle_osint))
     app.add_handler(CallbackQueryHandler(cb_handler))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, admin_msg))
+    
     Thread(target=run_flask, daemon=True).start()
+    
     async with app:
-        await app.initialize(); await app.start()
+        await app.initialize()
+        await app.start()
         await app.updater.start_polling(drop_pending_updates=True)
         while True: await asyncio.sleep(3600)
 
 if __name__ == "__main__":
-    try: asyncio.run(main())
-    except: pass            formatted_report = format_osint_data(final_data)
-            output = f"🔍 {cmd.upper()} RESULT:\n\n{formatted_report}"
-            
-            # WORD LIMIT FIX: Agar result bahut bada hai toh file bana kar bhejega
-            if len(output) > 4000:
-                with open("result.txt", "w") as f: f.write(output)
-                await update.message.reply_document(document=open("result.txt", "rb"), caption="📄 Result is too long, sending as file.")
-            else:
-                await update.message.reply_text(output)
-        else: await msg.edit_text("❌ No data found.")
-    except Exception as e: await msg.edit_text(f"❌ Error: {str(e)}")
-
-# =============== ADMIN PANEL =============== #
-async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != ADMIN_ID: return
-    st = "🟢 ON" if db["bot_status"] else "🔴 OFF"
-    kb = [
-        [InlineKeyboardButton(f"Bot Status: {st}", callback_data="toggle")],
-        [InlineKeyboardButton("📢 Channel Settings", callback_data="chan_set")],
-        [InlineKeyboardButton("👥 User List", callback_data="list"), InlineKeyboardButton("📢 Broadcast", callback_data="bc")]
-    ]
-    await update.message.reply_text("🔐 ADMIN CONTROL PANEL", reply_markup=InlineKeyboardMarkup(kb))
-
-async def cb_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    q = update.callback_query
-    await q.answer()
-    if q.data == "toggle":
-        db["bot_status"] = not db["bot_status"]; save_db(db)
-        await q.message.edit_text("✅ Status Updated! Use /admin to see changes.")
-    elif q.data == "chan_set":
-        await q.message.reply_text("📌 Current Channels:\n" + "\n".join([c['chat_id'] for c in db['channels']]) + "\n\n(Feature to add/remove via command is active)")
-    elif q.data == "list":
-        u_list = "👥 **LAST 20 USERS:**\n\n" + "\n".join([f"▪️ {v['name']} -> `{k}`" for k,v in list(db["users"].items())[-20:]])
-        await q.message.reply_text(u_list, parse_mode='Markdown')
-    elif q.data == "bc":
-        context.user_data['mode'] = 'bc'
-        await q.message.reply_text("📢 Send message for broadcast (or /cancel)")
-    elif q.data == "check_sub":
-        if await check_subs(q.from_user.id, context.bot): await q.edit_message_text("✅ Access Granted! Use /start")
-        else: await q.answer("❌ Join pehle!", show_alert=True)
-
-async def admin_msg(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != ADMIN_ID or 'mode' not in context.user_data: return
-    if update.message.text == "/cancel": context.user_data.clear(); return
-    for uid in db["users"].keys():
-        try: await context.bot.send_message(uid, update.message.text)
-        except: pass
-    await update.message.reply_text("✅ Broadcast Sent."); context.user_data.clear()
-
-# =============== MAIN RUNNER =============== #
-async def main():
-    app = Application.builder().token(TOKEN).build()
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("admin", admin_panel))
-    app.add_handler(CommandHandler(["num", "family", "tg"], handle_osint))
-    app.add_handler(CallbackQueryHandler(cb_handler))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, admin_msg))
-    Thread(target=run_flask, daemon=True).start()
-    async with app:
-        await app.initialize(); await app.start()
-        await app.updater.start_polling(drop_pending_updates=True)
-        while True: await asyncio.sleep(3600)
-
-if __name__ == "__main__":
-    try: asyncio.run(main())
-    except: pass
+    try:
+        asyncio.run(main())
+    except Exception:
+        pass
