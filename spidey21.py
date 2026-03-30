@@ -30,7 +30,13 @@ def load_db():
         try:
             with open(DB_FILE, "r") as f: return json.load(f)
         except: pass
-    return {"users": {}, "bot_status": True, "channels": [{"chat_id": "-1003767136934", "link": "https://t.me/+skVu9tSSuccyYTQ1"}]}
+    return {
+        "users": {}, 
+        "bot_status": True, 
+        "channels": [{"chat_id": "-1003767136934", "link": "https://t.me/+skVu9tSSuccyYTQ1"}],
+        "search_limit": 100,
+        "total_searches": 0
+    }
 
 def save_db(data):
     with open(DB_FILE, "w") as f: json.dump(data, f, indent=4)
@@ -51,11 +57,8 @@ def smart_format(data, indent=0):
     report = ""
     prefix = "  " * indent
     if isinstance(data, list):
-        if len(data) > 0 and isinstance(data[0], dict):
-            for i, item in enumerate(data):
-                report += f"\n{prefix}📍 ITEM {i+1}:\n" + smart_format(item, indent + 1)
-        else:
-            report += f"{prefix}🔸 " + ", ".join(map(str, data)) + "\n"
+        for i, item in enumerate(data):
+            report += f"\n{prefix}📍 ITEM {i+1}:\n" + smart_format(item, indent + 1)
     elif isinstance(data, dict):
         for k, v in data.items():
             if v in [None, "N/A", "None", "False", "", "null"]: continue
@@ -64,27 +67,22 @@ def smart_format(data, indent=0):
                 report += f"{prefix}🔹 {key_name}:\n" + smart_format(v, indent + 1)
             else:
                 report += f"{prefix}🔹 {key_name}: `{v}`\n"
-    else:
-        report += f"{prefix}🔸 {data}\n"
+    else: report += f"{prefix}🔸 {data}\n"
     return report
 
 def split_message(text, limit=3800):
     return [text[i:i+limit] for i in range(0, len(text), limit)]
 
-# =============== MAIN HANDLERS =============== #
+# =============== HANDLERS =============== #
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     db["users"][str(user.id)] = {"name": user.first_name, "username": user.username or "N/A"}
     save_db(db)
 
-    if not db["bot_status"] and user.id != ADMIN_ID:
-        await update.message.reply_text("⚠️ Bot is currently under maintenance.")
-        return
-
     if not await check_subs(user.id, context.bot):
         btns = [[InlineKeyboardButton("📢 Join Channel", url=c["link"])] for c in db["channels"]]
         btns.append([InlineKeyboardButton("✅ Check Subscription", callback_data="check_sub")])
-        await update.message.reply_photo(photo=WELCOME_IMAGE, caption="🚫 Join channel first!", reply_markup=InlineKeyboardMarkup(btns))
+        await update.message.reply_photo(photo=WELCOME_IMAGE, caption="🚫 Access Denied! Join channels first.", reply_markup=InlineKeyboardMarkup(btns))
         return
 
     welcome_text = (
@@ -106,10 +104,18 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_photo(photo=WELCOME_IMAGE, caption=welcome_text)
 
 async def handle_osint(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not db["bot_status"] and update.effective_user.id != ADMIN_ID: return
+    if not db["bot_status"] and update.effective_user.id != ADMIN_ID:
+        await update.message.reply_text("🔴 Bot is currently Offline.")
+        return
+    
+    if db["total_searches"] >= db["search_limit"]:
+        db["bot_status"] = False; save_db(db)
+        await update.message.reply_text("🚫 Search Limit Reached! Bot Auto-Off.")
+        return
+
     cmd = update.message.text.split()[0][1:]
     if not context.args:
-        await update.message.reply_text(f"❌ Input missing! Use `/{cmd} <value>`")
+        await update.message.reply_text(f"❌ Usage: `/{cmd} <input>`")
         return
     
     val = context.args[0]
@@ -120,7 +126,8 @@ async def handle_osint(update: Update, context: ContextTypes.DEFAULT_TYPE):
         r = requests.get(API_URLS[cmd], params=p, timeout=30).json()
         final_data = r.get('results', r.get('result', r.get('data', r)))
         
-        if final_data and str(final_data) != "[]":
+        if final_data:
+            db["total_searches"] += 1; save_db(db)
             report = smart_format(final_data)
             output = f"🔍 {cmd.upper()} RESULT:\n{report}"
             await status_msg.delete()
@@ -131,77 +138,73 @@ async def handle_osint(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         await status_msg.edit_text(f"❌ Error: {str(e)}")
 
-# =============== ADMIN PANEL (RE-BUILT) =============== #
+# =============== ADMIN PANEL (VERTICAL & COLORFUL) =============== #
 async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID: return
     st = "🟢 ON" if db["bot_status"] else "🔴 OFF"
-    total = len(db["users"])
+    total_u = len(db["users"])
+    
     kb = [
-        [InlineKeyboardButton(f"Bot Status: {st} | 👥 {total}", callback_data="toggle_st")],
-        [InlineKeyboardButton("👤 Bot Users (Names & IDs)", callback_data="user_list")],
-        [InlineKeyboardButton("📢 Broadcast", callback_data="bc_start")]
+        [InlineKeyboardButton(f"🤖 Bot Status: {st}", callback_data="toggle")],
+        [InlineKeyboardButton(f"👥 Total Users: {total_u}", callback_data="none")],
+        [InlineKeyboardButton("👤 View User Details", callback_data="u_list")],
+        [InlineKeyboardButton("📢 Broadcast Message", callback_data="bc")],
+        [InlineKeyboardButton("🔗 Add/Update Channel", callback_data="chan")],
+        [InlineKeyboardButton(f"📉 Search Limit: {db['search_limit']}", callback_data="lim")]
     ]
-    await update.message.reply_text("🔐 ADMIN COMMAND CENTER", reply_markup=InlineKeyboardMarkup(kb))
+    await update.message.reply_text("🛠 **SPIDEY ADMIN CONSOLE**", reply_markup=InlineKeyboardMarkup(kb), parse_mode='Markdown')
 
 async def cb_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    q = update.callback_query
-    await q.answer()
-    
-    if q.data == "toggle_st":
-        db["bot_status"] = not db["bot_status"]
-        save_db(db)
-        st = "🟢 ON" if db["bot_status"] else "🔴 OFF"
-        total = len(db["users"])
-        kb = [[InlineKeyboardButton(f"Bot Status: {st} | 👥 {total}", callback_data="toggle_st")],
-              [InlineKeyboardButton("👤 Bot Users (Names & IDs)", callback_data="user_list")],
-              [InlineKeyboardButton("📢 Broadcast", callback_data="bc_start")]]
-        await q.edit_message_text("🔐 ADMIN COMMAND CENTER", reply_markup=InlineKeyboardMarkup(kb))
-
-    elif q.data == "user_list":
-        user_text = "👥 **FULL USER DATABASE:**\n\n"
-        for uid, info in db["users"].items():
-            user_text += f"🆔 `{uid}` | 👤 {info['name']} (@{info['username']})\n"
-        for part in split_message(user_text):
-            await q.message.reply_text(part, parse_mode='Markdown')
-
-    elif q.data == "bc_start":
+    q = update.callback_query; await q.answer()
+    if q.data == "toggle":
+        db["bot_status"] = not db["bot_status"]; save_db(db)
+        await admin_panel(q.message, context) # Refresh
+    elif q.data == "u_list":
+        u_text = "👥 **USER LIST:**\n" + "\n".join([f"🔹 `{k}` | {v['name']}" for k,v in db['users'].items()])
+        for part in split_message(u_text): await q.message.reply_text(part, parse_mode='Markdown')
+    elif q.data == "bc":
         context.user_data['mode'] = 'bc'
-        await q.message.reply_text("📢 Send the message you want to broadcast to all users.")
+        await q.message.reply_text("📢 Send broadcast text.")
+    elif q.data == "chan":
+        context.user_data['mode'] = 'chan'
+        await q.message.reply_text("🔗 Send Channel ID and Link (Format: `ID|Link`)")
+    elif q.data == "lim":
+        context.user_data['mode'] = 'lim'
+        await q.message.reply_text("📉 Send new search limit number.")
 
-    elif q.data == "check_sub":
-        if await check_subs(q.from_user.id, context.bot):
-            await q.edit_message_text("✅ Access Granted! Use /start")
-
-async def admin_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != ADMIN_ID or context.user_data.get('mode') != 'bc': return
-    text = update.message.text
-    count = 0
-    for uid in db["users"].keys():
-        try:
-            await context.bot.send_message(chat_id=uid, text=f"📢 **BROADCAST FROM ADMIN:**\n\n{text}", parse_mode='Markdown')
-            count += 1
-        except: pass
-    await update.message.reply_text(f"✅ Broadcast sent to {count} users.")
+async def admin_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID or 'mode' not in context.user_data: return
+    mode = context.user_data['mode']; val = update.message.text
+    
+    if mode == 'bc':
+        for uid in db["users"].keys():
+            try: await context.bot.send_message(uid, f"📢 **ADMIN:**\n{val}")
+            except: pass
+        await update.message.reply_text("✅ Sent.")
+    elif mode == 'chan':
+        cid, link = val.split('|')
+        db["channels"] = [{"chat_id": cid.strip(), "link": link.strip()}]
+        save_db(db); await update.message.reply_text("✅ Channel Updated.")
+    elif mode == 'lim':
+        db["search_limit"] = int(val); db["total_searches"] = 0
+        save_db(db); await update.message.reply_text(f"✅ Limit set to {val}.")
+    
     context.user_data.clear()
 
-# =============== MAIN RUNNER =============== #
+# =============== RUNNER =============== #
 async def run_bot():
     app = Application.builder().token(TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("admin", admin_panel))
     app.add_handler(CommandHandler(["num", "family", "tg"], handle_osint))
     app.add_handler(CallbackQueryHandler(cb_handler))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, admin_broadcast))
-    
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, admin_input))
     Thread(target=run_flask, daemon=True).start()
-    
     async with app:
         await app.initialize(); await app.start()
         await app.updater.start_polling(drop_pending_updates=True)
         while True: await asyncio.sleep(3600)
 
 if __name__ == "__main__":
-    try:
-        asyncio.run(run_bot())
-    except (KeyboardInterrupt, SystemExit):
-        pass
+    try: asyncio.run(run_bot())
+    except (KeyboardInterrupt, SystemExit): pass
