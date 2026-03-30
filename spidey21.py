@@ -24,7 +24,7 @@ API_URLS = {
 }
 API_KEYS = {'num': 'annonymous', 'tg': 'annonymoustgtonum', 'family': 'annonymousfamily'}
 
-# =============== DATABASE =============== #
+# =============== DATABASE SYSTEM =============== #
 def load_db():
     if os.path.exists(DB_FILE):
         try:
@@ -37,7 +37,7 @@ def save_db(data):
 
 db = load_db()
 
-# =============== HELPERS =============== #
+# =============== HELPERS & FORMATTERS =============== #
 async def check_subs(user_id, bot):
     if user_id == ADMIN_ID: return True
     for c in db.get("channels", []):
@@ -51,30 +51,34 @@ def smart_format(data, indent=0):
     report = ""
     prefix = "  " * indent
     if isinstance(data, list):
-        for i, item in enumerate(data):
-            report += f"\n{prefix}📍 ITEM {i+1}:\n" + smart_format(item, indent + 1)
+        if len(data) > 0 and isinstance(data[0], dict):
+            for i, item in enumerate(data):
+                report += f"\n{prefix}📍 ITEM {i+1}:\n" + smart_format(item, indent + 1)
+        else:
+            report += f"{prefix}🔸 " + ", ".join(map(str, data)) + "\n"
     elif isinstance(data, dict):
         for k, v in data.items():
-            if not v or v in ["N/A", "None", "False", ""]: continue
+            if v in [None, "N/A", "None", "False", "", "null"]: continue
             key_name = k.replace("_", " ").title()
             if isinstance(v, (dict, list)):
                 report += f"{prefix}🔹 {key_name}:\n" + smart_format(v, indent + 1)
             else:
                 report += f"{prefix}🔹 {key_name}: `{v}`\n"
-    else: report += f"{prefix}🔸 {data}\n"
+    else:
+        report += f"{prefix}🔸 {data}\n"
     return report
 
 def split_message(text, limit=3800):
     return [text[i:i+limit] for i in range(0, len(text), limit)]
 
-# =============== HANDLERS =============== #
+# =============== MAIN HANDLERS =============== #
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
-    db["users"][str(user.id)] = {"name": user.first_name, "username": user.username}
+    db["users"][str(user.id)] = {"name": user.first_name, "username": user.username or "N/A"}
     save_db(db)
 
     if not db["bot_status"] and user.id != ADMIN_ID:
-        await update.message.reply_text("⚠️ Bot is currently OFF.")
+        await update.message.reply_text("⚠️ Bot is currently under maintenance.")
         return
 
     if not await check_subs(user.id, context.bot):
@@ -116,51 +120,69 @@ async def handle_osint(update: Update, context: ContextTypes.DEFAULT_TYPE):
         r = requests.get(API_URLS[cmd], params=p, timeout=30).json()
         final_data = r.get('results', r.get('result', r.get('data', r)))
         
-        if final_data:
-            await status_msg.delete()
+        if final_data and str(final_data) != "[]":
             report = smart_format(final_data)
             output = f"🔍 {cmd.upper()} RESULT:\n{report}"
+            await status_msg.delete()
             for part in split_message(output):
                 await update.message.reply_text(part, parse_mode='Markdown')
         else:
             await status_msg.edit_text("❌ No data found.")
     except Exception as e:
-        await status_msg.edit_text(f"❌ API Error: {str(e)}")
+        await status_msg.edit_text(f"❌ Error: {str(e)}")
 
-# =============== ADMIN PANEL =============== #
+# =============== ADMIN PANEL (RE-BUILT) =============== #
 async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID: return
     st = "🟢 ON" if db["bot_status"] else "🔴 OFF"
+    total = len(db["users"])
     kb = [
-        [InlineKeyboardButton(f"Bot Status: {st}", callback_data="toggle")],
-        [InlineKeyboardButton("👥 User List", callback_data="list"), InlineKeyboardButton("📢 Broadcast", callback_data="bc")],
-        [InlineKeyboardButton("📢 Channel Settings", callback_data="chan_set")]
+        [InlineKeyboardButton(f"Bot Status: {st} | 👥 {total}", callback_data="toggle_st")],
+        [InlineKeyboardButton("👤 Bot Users (Names & IDs)", callback_data="user_list")],
+        [InlineKeyboardButton("📢 Broadcast", callback_data="bc_start")]
     ]
-    await update.message.reply_text("🔐 ADMIN PANEL", reply_markup=InlineKeyboardMarkup(kb))
+    await update.message.reply_text("🔐 ADMIN COMMAND CENTER", reply_markup=InlineKeyboardMarkup(kb))
 
 async def cb_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer()
-    if q.data == "toggle":
-        db["bot_status"] = not db["bot_status"]; save_db(db)
-        await q.edit_message_text(f"✅ Bot Status: {db['bot_status']}", reply_markup=q.message.reply_markup)
-    elif q.data == "list":
-        await q.message.reply_text(f"👥 Total Users: {len(db['users'])}")
-    elif q.data == "bc":
-        context.user_data['mode'] = 'bc'
-        await q.message.reply_text("📢 Send broadcast text (or /cancel)")
-    elif q.data == "chan_set":
-        await q.message.reply_text("📌 Current Channels in DB.")
-    elif q.data == "check_sub":
-        if await check_subs(q.from_user.id, context.bot): await q.edit_message_text("✅ Access Granted! Use /start")
+    
+    if q.data == "toggle_st":
+        db["bot_status"] = not db["bot_status"]
+        save_db(db)
+        st = "🟢 ON" if db["bot_status"] else "🔴 OFF"
+        total = len(db["users"])
+        kb = [[InlineKeyboardButton(f"Bot Status: {st} | 👥 {total}", callback_data="toggle_st")],
+              [InlineKeyboardButton("👤 Bot Users (Names & IDs)", callback_data="user_list")],
+              [InlineKeyboardButton("📢 Broadcast", callback_data="bc_start")]]
+        await q.edit_message_text("🔐 ADMIN COMMAND CENTER", reply_markup=InlineKeyboardMarkup(kb))
 
-async def admin_msg(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != ADMIN_ID or 'mode' not in context.user_data: return
-    if update.message.text == "/cancel": context.user_data.clear(); return
+    elif q.data == "user_list":
+        user_text = "👥 **FULL USER DATABASE:**\n\n"
+        for uid, info in db["users"].items():
+            user_text += f"🆔 `{uid}` | 👤 {info['name']} (@{info['username']})\n"
+        for part in split_message(user_text):
+            await q.message.reply_text(part, parse_mode='Markdown')
+
+    elif q.data == "bc_start":
+        context.user_data['mode'] = 'bc'
+        await q.message.reply_text("📢 Send the message you want to broadcast to all users.")
+
+    elif q.data == "check_sub":
+        if await check_subs(q.from_user.id, context.bot):
+            await q.edit_message_text("✅ Access Granted! Use /start")
+
+async def admin_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID or context.user_data.get('mode') != 'bc': return
+    text = update.message.text
+    count = 0
     for uid in db["users"].keys():
-        try: await context.bot.send_message(uid, update.message.text)
+        try:
+            await context.bot.send_message(chat_id=uid, text=f"📢 **BROADCAST FROM ADMIN:**\n\n{text}", parse_mode='Markdown')
+            count += 1
         except: pass
-    await update.message.reply_text("✅ Broadcast Sent."); context.user_data.clear()
+    await update.message.reply_text(f"✅ Broadcast sent to {count} users.")
+    context.user_data.clear()
 
 # =============== MAIN RUNNER =============== #
 async def run_bot():
@@ -169,7 +191,7 @@ async def run_bot():
     app.add_handler(CommandHandler("admin", admin_panel))
     app.add_handler(CommandHandler(["num", "family", "tg"], handle_osint))
     app.add_handler(CallbackQueryHandler(cb_handler))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, admin_msg))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, admin_broadcast))
     
     Thread(target=run_flask, daemon=True).start()
     
